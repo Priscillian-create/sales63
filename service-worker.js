@@ -1,11 +1,11 @@
-const CACHE_NAME = 'purela-pharmacy-v5';
+const CACHE_NAME = 'purela-pharmacy-v6-live-sync';
 const urlsToCache = [
   '/',
   '/index.html',
   '/customer-display.html',
   '/styles.css',
-  '/manifest.json?v=20260413',
-  '/script.js?v=20260416'
+  '/manifest.json',
+  '/script.js'
 ];
 
 function createOfflineResponse(contentType) {

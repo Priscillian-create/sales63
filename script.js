@@ -1,6 +1,14 @@
 const isLocalDevHost =
   window.location.hostname === 'localhost' ||
   window.location.hostname === '127.0.0.1';
+const APP_VERSION = '2026-05-23-live-sync-1';
+const APP_UPDATE_CHECK_INTERVAL_MS = isLocalDevHost ? 12000 : 45000;
+const APP_UPDATE_WATCH_FILES = [
+  './index.html',
+  './script.js',
+  './styles.css',
+  './service-worker.js',
+];
 
 // Service Worker Registration
 if ('serviceWorker' in navigator) {
@@ -28,9 +36,11 @@ if ('serviceWorker' in navigator) {
 
     navigator.serviceWorker
       .register('./service-worker.js')
-      .then((registration) =>
-        console.log('ServiceWorker registered:', registration.scope)
-      )
+      .then((registration) => {
+        console.log('ServiceWorker registered:', registration.scope);
+        registration.update();
+        setInterval(() => registration.update(), APP_UPDATE_CHECK_INTERVAL_MS);
+      })
       .catch((err) => console.log('ServiceWorker registration failed:', err));
   });
 }
@@ -84,6 +94,12 @@ window.addEventListener('unhandledrejection', (e) => {
   } catch (_) {}
 });
 if (navigator.serviceWorker && !isLocalDevHost) {
+  let serviceWorkerReloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (serviceWorkerReloading) return;
+    serviceWorkerReloading = true;
+    location.reload();
+  });
   navigator.serviceWorker.addEventListener('message', (e) => {
     const d = e && e.data;
     if (d && d.type === 'SW_ACTIVATED') {
@@ -251,7 +267,6 @@ function applyStoreBranding() {
   settings.storePhone = STORE_BRANDING.phone;
 }
 
-const APP_VERSION = '1.0.1';
 const CUSTOMER_DISPLAY_CHANNEL = 'purela_customer_display_channel';
 const PERSISTENT_DB_NAME = 'purela_pharmacy_persistent_cache';
 const PERSISTENT_DB_VERSION = 1;
@@ -461,6 +476,12 @@ let currentShiftTimer = null;
 let customerDisplayWindow = null;
 let customerDisplayLastSale = null;
 let customerDisplayChannel = null;
+let appFileSignatures = {};
+let appUpdateCheckInProgress = false;
+let appUpdateReloadPending = false;
+let liveRefreshTimer = null;
+const liveRefreshReasons = new Set();
+let liveRefreshShouldNotify = false;
 try {
   if ('BroadcastChannel' in window) {
     customerDisplayChannel = new BroadcastChannel(CUSTOMER_DISPLAY_CHANNEL);
@@ -473,6 +494,65 @@ function debounce(fn, delay) {
     clearTimeout(timeoutId);
     timeoutId = setTimeout(() => fn.apply(this, args), delay);
   };
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => {
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    };
+    return map[char] || char;
+  });
+}
+
+function simpleHash(text) {
+  let hash = 0;
+  const source = String(text || '');
+  for (let i = 0; i < source.length; i++) {
+    hash = (hash * 31 + source.charCodeAt(i)) >>> 0;
+  }
+  return `${source.length}:${hash}`;
+}
+
+async function readAppFileSignature(file) {
+  const response = await fetch(`${file}${file.includes('?') ? '&' : '?'}vcheck=${Date.now()}`, {
+    cache: 'no-store',
+  });
+  if (!response.ok) throw new Error(`Could not check ${file}`);
+  return simpleHash(await response.text());
+}
+
+async function checkForAppFileUpdates() {
+  if (appUpdateCheckInProgress || appUpdateReloadPending) return;
+  appUpdateCheckInProgress = true;
+  try {
+    for (const file of APP_UPDATE_WATCH_FILES) {
+      const signature = await readAppFileSignature(file);
+      if (!appFileSignatures[file]) {
+        appFileSignatures[file] = signature;
+        continue;
+      }
+      if (appFileSignatures[file] !== signature) {
+        appUpdateReloadPending = true;
+        showNotification('App updated. Reloading latest version...', 'info');
+        setTimeout(() => location.reload(), 900);
+        return;
+      }
+    }
+  } catch (error) {
+    console.warn('App update check failed:', error);
+  } finally {
+    appUpdateCheckInProgress = false;
+  }
+}
+
+function startAppUpdateWatcher() {
+  checkForAppFileUpdates();
+  setInterval(checkForAppFileUpdates, APP_UPDATE_CHECK_INTERVAL_MS);
 }
 
 function isCustomerViewOpen() {
@@ -1222,6 +1302,7 @@ window.addEventListener('online', () => {
     }
   } catch (_) {}
   checkSupabaseConnection();
+  setupRealtimeListeners();
   try {
     if (syncQueue && syncQueue.length > 0) {
       processSyncQueue();
@@ -1229,6 +1310,7 @@ window.addEventListener('online', () => {
   } catch (e) {
     console.error('Error triggering sync after online:', e);
   }
+  scheduleLiveDataRefresh('all', { notify: false });
   setTimeout(refreshAllData, 1000);
 });
 
@@ -2160,7 +2242,7 @@ const DataModule = {
           const sig = purchaseSignature(lp);
           if (!serverSignatures.has(sig)) merged.push(lp);
         });
-        purchases = dedupeListByKey(merged, purchaseKey);
+        purchases = dedupeListByKey(merged.map(normalizePurchaseRecord), purchaseKey);
         saveToLocalStorage();
         return purchases;
       }
@@ -2183,40 +2265,66 @@ const DataModule = {
         userId = '00000000-0000-0000-0000-000000000000';
       }
 
+      const normalizedPurchase = normalizePurchaseRecord(purchase);
       const purchaseToSave = {
         date: purchase.date,
         supplier: purchase.supplier,
         description: purchase.description,
-        amount: purchase.amount,
+        quantity: normalizedPurchase.quantity,
+        costprice: normalizedPurchase.costPrice,
+        sellingprice: normalizedPurchase.sellingPrice,
+        amount: normalizedPurchase.amount,
         invoice: purchase.invoice,
         notes: purchase.notes,
         created_by: userId,
       };
 
       if (isOnline) {
-        const { data, error } = await supabaseClient
-          .from('purchases')
-          .insert(purchaseToSave)
-          .select();
+        const query =
+          purchase.id && !String(purchase.id).startsWith('temp_')
+            ? supabaseClient
+                .from('purchases')
+                .update(purchaseToSave)
+                .eq('id', purchase.id)
+                .select()
+            : supabaseClient.from('purchases').insert(purchaseToSave).select();
+
+        const { data, error } = await query;
 
         if (error) throw error;
 
         if (data && data.length > 0) {
-          purchases.unshift(data[0]);
+          const savedPurchase = normalizePurchaseRecord({
+            ...normalizedPurchase,
+            ...data[0],
+            productId: normalizedPurchase.productId,
+            productName: normalizedPurchase.productName,
+          });
+          const existingIndex = purchases.findIndex((p) => p.id === savedPurchase.id);
+          if (existingIndex >= 0) purchases[existingIndex] = savedPurchase;
+          else purchases.unshift(savedPurchase);
+          purchases = dedupeListByKey(purchases, purchaseKey);
           saveToLocalStorage();
-          return { success: true, purchase: data[0] };
+          return { success: true, purchase: savedPurchase };
         }
+        return { success: true, purchase: normalizedPurchase };
       } else {
-        purchaseToSave.id = 'temp_' + Date.now();
-        purchases.unshift(purchaseToSave);
+        const localPurchase = {
+          ...normalizedPurchase,
+          id: normalizedPurchase.id || 'temp_' + Date.now(),
+          created_by: userId,
+        };
+        const existingIndex = purchases.findIndex((p) => p.id === localPurchase.id);
+        if (existingIndex >= 0) purchases[existingIndex] = localPurchase;
+        else purchases.unshift(localPurchase);
         saveToLocalStorage();
 
         addToSyncQueue({
           type: 'savePurchase',
-          data: purchaseToSave,
+          data: localPurchase,
         });
 
-        return { success: true, purchase: purchaseToSave };
+        return { success: true, purchase: localPurchase };
       }
     } catch (error) {
       console.error('Error saving purchase:', error);
@@ -3681,11 +3789,23 @@ async function syncPurchase(operation) {
     }
     operation.data.created_by = userId;
 
-    // Create a copy of the purchase data without the temporary ID
-    const purchaseData = { ...operation.data, created_by: userId };
+    const normalizedPurchase = normalizePurchaseRecord(operation.data);
+    const purchaseData = {
+      date: normalizedPurchase.date,
+      supplier: normalizedPurchase.supplier,
+      description: normalizedPurchase.description,
+      quantity: normalizedPurchase.quantity,
+      costprice: normalizedPurchase.costPrice,
+      sellingprice: normalizedPurchase.sellingPrice,
+      amount: normalizedPurchase.amount,
+      invoice: normalizedPurchase.invoice,
+      notes: normalizedPurchase.notes,
+      created_by: userId,
+    };
+    if (normalizedPurchase.id) purchaseData.id = normalizedPurchase.id;
 
     // Remove the temporary ID if it exists
-    if (purchaseData.id && purchaseData.id.startsWith('temp_')) {
+    if (purchaseData.id && String(purchaseData.id).startsWith('temp_')) {
       delete purchaseData.id;
     }
 
@@ -3811,98 +3931,127 @@ function disableArchive() {
   localStorage.setItem('ARCHIVE_ENABLED', 'false');
 }
 
+async function refreshVisiblePageAfterLiveSync() {
+  if (currentPage === 'inventory') {
+    await loadInventory(false);
+    loadExpenses();
+  } else if (currentPage === 'stock') {
+    loadStockCheck();
+  } else if (currentPage === 'purchases') {
+    await loadPurchases();
+  } else if (currentPage === 'profit-loss') {
+    await loadProfitLossReport();
+  } else if (currentPage === 'reports') {
+    try {
+      generateReport();
+    } catch (_) {}
+  } else if (currentPage === 'sales') {
+    loadSales();
+  } else if (currentPage === 'pos') {
+    loadProducts();
+    syncCustomerDisplayState();
+  } else if (currentPage === 'requests') {
+    loadRequestsPage();
+  }
+}
+
+function scheduleLiveDataRefresh(reason = 'remote-change', options = {}) {
+  liveRefreshReasons.add(reason);
+  if (options.notify !== false) liveRefreshShouldNotify = true;
+  clearTimeout(liveRefreshTimer);
+  liveRefreshTimer = setTimeout(async () => {
+    const reasons = Array.from(liveRefreshReasons);
+    liveRefreshReasons.clear();
+    const shouldNotify = liveRefreshShouldNotify;
+    liveRefreshShouldNotify = false;
+    try {
+      const needsProducts = reasons.some((item) =>
+        ['products', 'categories', 'all'].includes(item)
+      );
+      const needsSales = reasons.some((item) =>
+        ['sales', 'deleted_sales', 'all'].includes(item)
+      );
+      const needsExpenses = reasons.some((item) =>
+        ['expenses', 'all'].includes(item)
+      );
+      const needsPurchases = reasons.some((item) =>
+        ['purchases', 'all'].includes(item)
+      );
+      const fetches = [];
+      if (needsProducts) fetches.push(DataModule.fetchAllProducts());
+      if (needsSales) {
+        fetches.push(DataModule.fetchSales());
+        fetches.push(DataModule.fetchDeletedSales());
+      }
+      if (needsExpenses) fetches.push(DataModule.fetchExpenses());
+      if (needsPurchases) fetches.push(DataModule.fetchPurchases());
+      if (reasons.includes('categories')) fetches.push(DataModule.fetchCategories());
+      await Promise.allSettled(fetches);
+      saveToLocalStorage();
+      checkAndGenerateAlerts();
+      loadProducts();
+      loadSales();
+      await refreshVisiblePageAfterLiveSync();
+      if (shouldNotify && !document.hidden) {
+        showNotification('Latest data synced from another device', 'info');
+      }
+    } catch (error) {
+      console.warn('Live data refresh failed:', error);
+    }
+  }, 500);
+}
+
 function setupRealtimeListeners() {
-  if (!isOnline) return;
+  if (!isOnline || supabaseIsStub) return;
   if (appRealtimeChannel) return;
 
-  const channel = supabaseClient.channel('app-changes');
+  const channel = supabaseClient.channel(`app-changes-${APP_VERSION}`);
 
   channel.on(
     'postgres_changes',
     { event: '*', schema: 'public', table: 'products' },
-    () => {
-      DataModule.fetchAllProducts().then((updatedProducts) => {
-        products = updatedProducts;
-        saveToLocalStorage();
-        loadProducts();
-        if (currentPage === 'inventory') {
-          loadInventory(false);
-        }
-        checkAndGenerateAlerts();
-      });
-    }
+    () => scheduleLiveDataRefresh('products')
   );
 
   channel.on(
     'postgres_changes',
     { event: '*', schema: 'public', table: 'sales' },
-    () => {
-      DataModule.fetchSales().then((updatedSales) => {
-        sales = updatedSales;
-        saveToLocalStorage();
-        loadSales();
-      });
-    }
+    () => scheduleLiveDataRefresh('sales')
   );
 
   channel.on(
     'postgres_changes',
     { event: '*', schema: 'public', table: 'deleted_sales' },
-    () => {
-      DataModule.fetchDeletedSales().then((updatedDeletedSales) => {
-        deletedSales = updatedDeletedSales;
-        saveToLocalStorage();
-        loadDeletedSales();
-      });
-    }
+    () => scheduleLiveDataRefresh('deleted_sales')
   );
 
   channel.on(
     'postgres_changes',
     { event: '*', schema: 'public', table: 'expenses' },
-    () => {
-      DataModule.fetchExpenses().then((updatedExpenses) => {
-        expenses = updatedExpenses;
-        saveToLocalStorage();
-        if (currentPage === 'expenses' || currentPage === 'inventory') {
-          loadExpenses();
-        }
-      });
-    }
+    () => scheduleLiveDataRefresh('expenses')
   );
 
   channel.on(
     'postgres_changes',
     { event: '*', schema: 'public', table: 'purchases' },
-    () => {
-      DataModule.fetchPurchases().then((updatedPurchases) => {
-        purchases = updatedPurchases;
-        saveToLocalStorage();
-        if (currentPage === 'purchases') {
-          loadPurchases();
-        }
-      });
-    }
+    () => scheduleLiveDataRefresh('purchases')
   );
 
   channel.on(
     'postgres_changes',
     { event: '*', schema: 'public', table: 'categories' },
-    () => {
-      DataModule.fetchCategories().then((updatedCategories) => {
-        categories = updatedCategories;
-        saveToLocalStorage();
-        try {
-          populateCategorySelect();
-        } catch (_) {}
-        if (currentPage === 'inventory') {
-          loadInventory(false);
-        }
-      });
-    }
+    () => scheduleLiveDataRefresh('categories')
   );
 
-  channel.subscribe();
+  channel.subscribe((status) => {
+    if (status === 'SUBSCRIBED') {
+      console.log('Realtime sync connected');
+    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      console.warn('Realtime sync connection issue:', status);
+      appRealtimeChannel = null;
+      setTimeout(setupRealtimeListeners, 3000);
+    }
+  });
   appRealtimeChannel = channel;
 }
 
@@ -4606,6 +4755,13 @@ function purchaseKey(p) {
   return `${p.date || ''}|${(p.supplier || '').toLowerCase()}|${normalizePrice(
     p.amount
   )}`;
+}
+
+function purchaseSignature(p) {
+  const normalized = normalizePurchaseRecord(p || {});
+  return `${normalized.date || ''}|${String(normalized.supplier || '').toLowerCase()}|${String(
+    normalized.description || ''
+  ).toLowerCase()}|${normalizePrice(normalized.amount)}`;
 }
 
 function expenseKey(e) {
@@ -5924,7 +6080,7 @@ function loadStockCheck() {
     if (sorted.length === 0) {
       if (tableBody) {
         tableBody.innerHTML =
-          '<tr><td colspan="2" style="text-align: center;">No products</td></tr>';
+          '<tr><td colspan="4" style="text-align: center;">No products</td></tr>';
       }
       if (totalItemsEl) totalItemsEl.textContent = '0';
     } else {
@@ -5938,10 +6094,16 @@ function loadStockCheck() {
           const p = sorted[idx];
           const cat = (p.category || 'Uncategorized').toString();
           if (cat !== lastCat) {
-            html += `<tr class="category-header"><td colspan="2">${cat}</td></tr>`;
+            html += `<tr class="category-header"><td colspan="4">${cat}</td></tr>`;
             lastCat = cat;
           }
-          html += `<tr><td>${p.name}</td><td>${Number(p.stock) || 0}</td></tr>`;
+          html += `
+            <tr>
+              <td>${p.name}</td>
+              <td>${Number(p.stock) || 0}</td>
+              <td class="stock-physical-cell"></td>
+              <td class="stock-notes-cell"></td>
+            </tr>`;
         }
         if (html && tableBody) {
           tableBody.insertAdjacentHTML('beforeend', html);
@@ -5984,6 +6146,84 @@ function loadStockCheck() {
   } else {
     render();
   }
+}
+
+function getStockCheckProducts() {
+  return (Array.isArray(products) ? products : [])
+    .filter((p) => p && !p.deleted)
+    .slice()
+    .sort((a, b) => {
+      const ac = (a.category || 'Uncategorized').toString().toLowerCase();
+      const bc = (b.category || 'Uncategorized').toString().toLowerCase();
+      if (ac !== bc) return ac.localeCompare(bc);
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+}
+
+function printStockCheck() {
+  const sorted = getStockCheckProducts();
+  const title = document.getElementById('stock-check-banner')?.textContent || 'Stock Check';
+  const printedAt = new Date().toLocaleString();
+  let rows = '';
+  let lastCat = null;
+
+  sorted.forEach((product) => {
+    const cat = (product.category || 'Uncategorized').toString();
+    if (cat !== lastCat) {
+      rows += `<tr class="category-row"><td colspan="4">${cat}</td></tr>`;
+      lastCat = cat;
+    }
+    rows += `
+      <tr>
+        <td>${escapeHtml(product.name || 'Unnamed Product')}</td>
+        <td>${Number(product.stock) || 0}</td>
+        <td></td>
+        <td></td>
+      </tr>`;
+  });
+
+  const printWindow = window.open('', '_blank', 'width=1000,height=700');
+  if (!printWindow) {
+    showNotification('Allow pop-ups to print the stock sheet', 'warning');
+    return;
+  }
+
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <title>Physical Stock Check</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #111; margin: 24px; }
+          h1 { margin: 0 0 4px; font-size: 22px; }
+          p { margin: 0 0 16px; color: #444; }
+          table { border-collapse: collapse; width: 100%; font-size: 12px; }
+          th, td { border: 1px solid #333; padding: 7px; text-align: left; min-height: 28px; }
+          th { background: #f0f0f0; }
+          .category-row td { background: #e8eef7; font-weight: 700; }
+          @media print { body { margin: 10mm; } }
+        </style>
+      </head>
+      <body>
+        <h1>Physical Stock Check</h1>
+        <p>${escapeHtml(title)} | Printed: ${escapeHtml(printedAt)} | Products: ${sorted.length}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>System Qty</th>
+              <th>Physical Qty Available</th>
+              <th>Difference / Notes</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="4">No products</td></tr>'}</tbody>
+        </table>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
 }
 
 function validateProductData(product) {
@@ -8309,38 +8549,196 @@ async function refreshExpenses() {
 }
 
 // Purchase Functions
-function openPurchaseModal(purchase = null) {
+function normalizePurchaseRecord(purchase = {}) {
+  const quantity = Math.max(
+    1,
+    parseInt(purchase.quantity ?? purchase.qty ?? 1, 10) || 1
+  );
+  const costPrice = Number(
+    purchase.costPrice ?? purchase.costprice ?? purchase.cost_price ?? 0
+  );
+  const sellingPriceRaw =
+    purchase.sellingPrice ?? purchase.sellingprice ?? purchase.selling_price;
+  const sellingPrice =
+    sellingPriceRaw === '' || sellingPriceRaw === null || sellingPriceRaw === undefined
+      ? null
+      : Number(sellingPriceRaw);
+  const amountRaw = Number(purchase.amount);
+  const amount =
+    Number.isFinite(amountRaw) && amountRaw > 0
+      ? amountRaw
+      : quantity * (Number.isFinite(costPrice) ? costPrice : 0);
+
+  return {
+    ...purchase,
+    quantity,
+    costPrice: Number.isFinite(costPrice) ? costPrice : 0,
+    sellingPrice: Number.isFinite(sellingPrice) ? sellingPrice : null,
+    amount,
+    productId: purchase.productId || purchase.product_id || '',
+    productName: purchase.productName || purchase.product_name || '',
+  };
+}
+
+function getPurchaseProductMatches(term) {
+  const query = String(term || '').trim().toLowerCase();
+  if (!query) return [];
+  const tokens = query.split(/\s+/).filter(Boolean);
+  return (Array.isArray(products) ? products : [])
+    .filter((product) => product && !product.deleted)
+    .map((product) => {
+      const haystack = [
+        product.name,
+        product.barcode,
+        product.category,
+        product.price,
+        product.stock,
+      ]
+        .filter((value) => value !== null && value !== undefined)
+        .join(' ')
+        .toLowerCase();
+      const score = tokens.reduce(
+        (total, token) => total + (haystack.includes(token) ? 1 : 0),
+        0
+      );
+      const startsWith = String(product.name || '')
+        .toLowerCase()
+        .startsWith(query);
+      return { product, score: score + (startsWith ? 2 : 0) };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || String(a.product.name).localeCompare(String(b.product.name)))
+    .slice(0, 12)
+    .map((entry) => entry.product);
+}
+
+function renderPurchaseProductSuggestions(term) {
+  const suggestions = document.getElementById('purchase-product-suggestions');
+  if (!suggestions) return;
+  const matches = getPurchaseProductMatches(term);
+  if (!String(term || '').trim()) {
+    suggestions.innerHTML = '<small>Type a product name, barcode, or category to search inventory.</small>';
+    return;
+  }
+  if (matches.length === 0) {
+    suggestions.innerHTML = '<small>No matching products found.</small>';
+    return;
+  }
+  suggestions.innerHTML = matches
+    .map(
+      (product) => `
+        <button type="button" class="purchase-product-option" data-product-id="${product.id}">
+          <strong>${escapeHtml(product.name || 'Unnamed Product')}</strong>
+          <span>${escapeHtml(product.category || 'Uncategorized')} | Stock: ${Number(product.stock) || 0} | ${formatCurrency(Number(product.price) || 0)}</span>
+        </button>`
+    )
+    .join('');
+}
+
+function selectPurchaseProduct(productId) {
+  const product = (Array.isArray(products) ? products : []).find(
+    (item) => String(item.id) === String(productId)
+  );
+  if (!product) return;
+  const hidden = document.getElementById('purchase-product-id');
+  const selected = document.getElementById('purchase-product-selected');
+  const search = document.getElementById('purchase-product-search');
+  const description = document.getElementById('purchase-description');
+  const sellingPrice = document.getElementById('purchase-selling-price');
+  const suggestions = document.getElementById('purchase-product-suggestions');
+
+  if (hidden) hidden.value = product.id;
+  if (selected) selected.value = product.name || '';
+  if (search) search.value = product.name || '';
+  if (description && !description.value.trim()) description.value = product.name || '';
+  if (sellingPrice && !sellingPrice.value) sellingPrice.value = Number(product.price) || '';
+  if (suggestions) suggestions.innerHTML = '<small>Selected product will be restocked when this purchase is saved.</small>';
+  updatePurchaseEstimate();
+}
+
+async function applyPurchaseStockChange(productId, quantityChange, sellingPrice) {
+  if (!productId || !Number.isFinite(quantityChange) || quantityChange === 0) return;
+  const product = (Array.isArray(products) ? products : []).find(
+    (item) => String(item.id) === String(productId)
+  );
+  if (!product) return;
+
+  const nextStock = Math.max(0, (Number(product.stock) || 0) + quantityChange);
+  const nextPrice =
+    Number.isFinite(sellingPrice) && sellingPrice > 0 ? sellingPrice : Number(product.price) || 0;
+  product.stock = nextStock;
+  product.price = nextPrice;
+  saveToLocalStorage();
+
+  if (!isOnline || String(product.id).startsWith('temp_')) {
+    addToSyncQueue({ type: 'saveProduct', data: product });
+    return;
+  }
+
+  try {
+    const updateData = { stock: nextStock, price: nextPrice };
+    const { error } = await supabaseClient
+      .from('products')
+      .update(updateData)
+      .eq('id', product.id);
+    if (error) throw error;
+  } catch (error) {
+    console.warn('Could not sync product stock after purchase:', error);
+    addToSyncQueue({ type: 'saveProduct', data: product });
+  }
+}
+
+async function openPurchaseModal(purchase = null) {
   if (!canModifyProtectedData()) {
     showNotification('Only admins can manage purchases', 'error');
     return;
+  }
+
+  if ((!Array.isArray(products) || products.length === 0) && isOnline) {
+    try {
+      await DataModule.fetchAllProducts();
+    } catch (error) {
+      console.warn('Could not preload products for purchase search:', error);
+    }
   }
 
   const modalTitle = document.getElementById('purchase-modal-title');
   const purchaseForm = document.getElementById('purchase-form');
 
   if (purchase) {
+    const normalizedPurchase = normalizePurchaseRecord(purchase);
     modalTitle.textContent = 'Edit Purchase';
-    document.getElementById('purchase-date').value = purchase.date;
-    document.getElementById('purchase-supplier').value = purchase.supplier;
+    document.getElementById('purchase-date').value = normalizedPurchase.date;
+    document.getElementById('purchase-supplier').value = normalizedPurchase.supplier;
     document.getElementById('purchase-quantity').value =
-      Number(purchase.quantity) > 0 ? purchase.quantity : 1;
+      Number(normalizedPurchase.quantity) > 0 ? normalizedPurchase.quantity : 1;
     document.getElementById('purchase-cost-price').value =
-      Number(purchase.costPrice) >= 0
-        ? purchase.costPrice
-        : Number(purchase.amount) || '';
+      Number(normalizedPurchase.costPrice) >= 0 ? normalizedPurchase.costPrice : '';
     document.getElementById('purchase-selling-price').value =
-      Number(purchase.sellingPrice) >= 0 ? purchase.sellingPrice : '';
+      Number(normalizedPurchase.sellingPrice) >= 0 ? normalizedPurchase.sellingPrice : '';
     document.getElementById('purchase-description').value =
-      purchase.description;
-    document.getElementById('purchase-invoice').value = purchase.invoice || '';
-    document.getElementById('purchase-notes').value = purchase.notes || '';
+      normalizedPurchase.description;
+    document.getElementById('purchase-product-id').value = normalizedPurchase.productId || '';
+    document.getElementById('purchase-product-selected').value =
+      normalizedPurchase.productName || normalizedPurchase.description || '';
+    document.getElementById('purchase-product-search').value =
+      normalizedPurchase.productName || normalizedPurchase.description || '';
+    document.getElementById('purchase-invoice').value = normalizedPurchase.invoice || '';
+    document.getElementById('purchase-notes').value = normalizedPurchase.notes || '';
 
     purchaseForm.dataset.purchaseId = purchase.id;
+    purchaseForm.dataset.originalProductId = normalizedPurchase.productId || '';
+    purchaseForm.dataset.originalQuantity = String(normalizedPurchase.quantity || 0);
   } else {
     modalTitle.textContent = 'Add Purchase';
     purchaseForm.reset();
     document.getElementById('purchase-date').valueAsDate = new Date();
     delete purchaseForm.dataset.purchaseId;
+    delete purchaseForm.dataset.originalProductId;
+    delete purchaseForm.dataset.originalQuantity;
+    document.getElementById('purchase-product-id').value = '';
+    document.getElementById('purchase-product-selected').value = '';
+    renderPurchaseProductSuggestions('');
   }
 
   updatePurchaseEstimate();
@@ -8387,6 +8785,8 @@ async function savePurchase() {
   const quantityEl = document.getElementById('purchase-quantity');
   const costPriceEl = document.getElementById('purchase-cost-price');
   const sellingPriceEl = document.getElementById('purchase-selling-price');
+  const productId = document.getElementById('purchase-product-id').value;
+  const selectedProductName = document.getElementById('purchase-product-selected').value;
   const quantity = Number(quantityEl.value);
   const costPrice = Number(costPriceEl.value);
   const sellingPrice = Number(sellingPriceEl.value);
@@ -8439,6 +8839,8 @@ async function savePurchase() {
     costPrice,
     sellingPrice: Number.isFinite(sellingPrice) ? sellingPrice : null,
     amount,
+    productId,
+    productName: selectedProductName,
     invoice: invoice,
     notes: notes,
   };
@@ -8457,8 +8859,20 @@ async function savePurchase() {
     const result = await DataModule.savePurchase(purchaseData);
 
     if (result.success) {
+      const originalProductId = purchaseForm.dataset.originalProductId || '';
+      const originalQuantity = Number(purchaseForm.dataset.originalQuantity) || 0;
+      if (purchaseId && originalProductId && originalProductId !== productId) {
+        await applyPurchaseStockChange(originalProductId, -originalQuantity, null);
+        await applyPurchaseStockChange(productId, quantity, sellingPrice);
+      } else if (productId) {
+        const quantityChange = purchaseId ? quantity - originalQuantity : quantity;
+        await applyPurchaseStockChange(productId, quantityChange, sellingPrice);
+      }
       closePurchaseModal();
       loadPurchases();
+      if (document.getElementById('inventory-page')?.style.display !== 'none') {
+        loadInventory(false);
+      }
       showNotification('Purchase saved successfully', 'success');
     } else {
       showNotification('Failed to save purchase. Please try again.', 'error');
@@ -8518,14 +8932,17 @@ async function loadPurchases() {
     if (purchases.length === 0) {
       tableBody.innerHTML = `
                 <tr>
-                    <td colspan="5" style="text-align: center;">No purchases data available</td>
+                    <td colspan="10" style="text-align: center;">No purchases data available</td>
                 </tr>
             `;
     } else {
       tableBody.innerHTML = '';
 
       purchases.slice(0, 20).forEach((purchase) => {
+        purchase = normalizePurchaseRecord(purchase);
         const row = document.createElement('tr');
+        const revenue = purchase.sellingPrice ? purchase.sellingPrice * purchase.quantity : 0;
+        const profit = revenue - purchase.amount;
         const actionButtons = canModifyProtectedData()
           ? `
                               <button class="btn-edit" onclick="editPurchase('${purchase.id}')" title="Edit Purchase">
@@ -8537,8 +8954,13 @@ async function loadPurchases() {
         row.innerHTML = `
                       <td>${formatDate(purchase.date)}</td>
                       <td>${purchase.supplier}</td>
-                      <td>${purchase.description}</td>
+                      <td>${purchase.productName || purchase.description}</td>
+                      <td>${purchase.quantity}</td>
+                      <td>${formatCurrency(purchase.costPrice)}</td>
+                      <td>${purchase.sellingPrice ? formatCurrency(purchase.sellingPrice) : '-'}</td>
                       <td>${formatCurrency(purchase.amount)}</td>
+                      <td>${revenue ? formatCurrency(revenue) : '-'}</td>
+                      <td class="${profit < 0 ? 'loss-value' : 'profit-value'}">${revenue ? formatCurrency(profit) : '-'}</td>
                       <td>
                           <div class="action-buttons">
                               ${actionButtons}
@@ -8617,6 +9039,7 @@ function filterPurchases() {
       matchesSearch =
         String(purchase.supplier || '').toLowerCase().includes(searchTerm) ||
         String(purchase.description || '').toLowerCase().includes(searchTerm) ||
+        String(purchase.productName || purchase.product_name || '').toLowerCase().includes(searchTerm) ||
         String(purchase.notes || '').toLowerCase().includes(searchTerm) ||
         String(purchase.invoice || '').toLowerCase().includes(searchTerm);
     }
@@ -8633,14 +9056,17 @@ function filterPurchases() {
   if (filteredPurchases.length === 0) {
     tableBody.innerHTML = `
             <tr>
-                <td colspan="5" style="text-align: center;">No purchases match the current filters</td>
+                <td colspan="10" style="text-align: center;">No purchases match the current filters</td>
             </tr>
         `;
   } else {
     tableBody.innerHTML = '';
 
     filteredPurchases.forEach((purchase) => {
+      purchase = normalizePurchaseRecord(purchase);
       const row = document.createElement('tr');
+      const revenue = purchase.sellingPrice ? purchase.sellingPrice * purchase.quantity : 0;
+      const profit = revenue - purchase.amount;
       const actionButtons = canModifyProtectedData()
         ? `
                         <button class="btn-edit" onclick="editPurchase('${purchase.id}')" title="Edit Purchase">
@@ -8652,8 +9078,13 @@ function filterPurchases() {
       row.innerHTML = `
                 <td>${formatDate(purchase.date)}</td>
                 <td>${purchase.supplier}</td>
-                <td>${purchase.description}</td>
+                <td>${purchase.productName || purchase.description}</td>
+                <td>${purchase.quantity}</td>
+                <td>${formatCurrency(purchase.costPrice)}</td>
+                <td>${purchase.sellingPrice ? formatCurrency(purchase.sellingPrice) : '-'}</td>
                 <td>${formatCurrency(purchase.amount)}</td>
+                <td>${revenue ? formatCurrency(revenue) : '-'}</td>
+                <td class="${profit < 0 ? 'loss-value' : 'profit-value'}">${revenue ? formatCurrency(profit) : '-'}</td>
                 <td>
                     <div class="action-buttons">
                         ${actionButtons}
@@ -9375,7 +9806,7 @@ async function loadProfitLossReport(refresh = false) {
       range.textContent = `${formatDate(start, true)} to ${formatDate(
         end,
         true
-      )}. Purchases are stock costs recorded in the period.`;
+      )}. Inventory purchase/expenses are stock costs recorded in the period.`;
     }
     renderProfitLossWeeklyBreakdown(filteredSales, filteredPurchases, filteredExpenses);
   } catch (error) {
@@ -9931,6 +10362,10 @@ if (refreshStockBtn) {
     loadStockCheck();
   });
 }
+const printStockCheckBtn = document.getElementById('print-stock-check-btn');
+if (printStockCheckBtn) {
+  printStockCheckBtn.addEventListener('click', printStockCheck);
+}
 
 // Refresh report button
 const refreshReportBtn = document.getElementById('refresh-report-btn');
@@ -10026,7 +10461,7 @@ if (changePasswordForm) {
 // Purchase page event listeners
 {
   const p1 = document.getElementById('add-purchase-btn');
-  if (p1) p1.addEventListener('click', openPurchaseModal);
+  if (p1) p1.addEventListener('click', () => openPurchaseModal());
   const p2 = document.getElementById('refresh-purchases-btn');
   if (p2) p2.addEventListener('click', refreshPurchases);
   const p3 = document.getElementById('purchase-search');
@@ -10039,6 +10474,27 @@ if (changePasswordForm) {
       if (field) field.addEventListener('input', updatePurchaseEstimate);
     }
   );
+  const purchaseProductSearch = document.getElementById('purchase-product-search');
+  if (purchaseProductSearch) {
+    purchaseProductSearch.addEventListener(
+      'input',
+      debounce(() => renderPurchaseProductSuggestions(purchaseProductSearch.value), 120)
+    );
+    purchaseProductSearch.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const firstMatch = getPurchaseProductMatches(purchaseProductSearch.value)[0];
+        if (firstMatch) selectPurchaseProduct(firstMatch.id);
+      }
+    });
+  }
+  const purchaseSuggestions = document.getElementById('purchase-product-suggestions');
+  if (purchaseSuggestions) {
+    purchaseSuggestions.addEventListener('click', (event) => {
+      const option = event.target.closest('[data-product-id]');
+      if (option) selectPurchaseProduct(option.dataset.productId);
+    });
+  }
 }
 
 // Analytics page event listeners
@@ -10176,6 +10632,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
 // Initialize app
 async function init() {
   configurePosInputs();
+  startAppUpdateWatcher();
   mergeExpensesIntoInventory();
   removeEmbeddedSalesReportProfitLoss();
   await resetCachedBusinessDataForProject();
@@ -10225,6 +10682,13 @@ async function init() {
       }
     }
   }, 30 * 60 * 1000);
+
+  setInterval(() => {
+    if (currentUser && isOnline && !document.hidden) {
+      setupRealtimeListeners();
+      scheduleLiveDataRefresh('all', { notify: false });
+    }
+  }, 25000);
 }
 
 window.addEventListener('pagehide', () => {
@@ -10234,6 +10698,12 @@ window.addEventListener('pagehide', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     saveToLocalStorage();
+  } else {
+    checkForAppFileUpdates();
+    if (currentUser && isOnline) {
+      setupRealtimeListeners();
+      scheduleLiveDataRefresh('all', { notify: false });
+    }
   }
 });
 

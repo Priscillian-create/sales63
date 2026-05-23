@@ -20,7 +20,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- External CSS -->
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=20260523-live-sync-1">
     
     <!-- Enhanced Alert System CSS -->
     <style>
@@ -544,9 +544,14 @@
                     </div>
                     <div class="inventory-header">
                         <h3>Thursday Stock Check</h3>
-                        <button class="btn btn-outline" id="refresh-stock-btn">
-                            <i class="fas fa-sync"></i> Refresh
-                        </button>
+                        <div class="page-actions">
+                            <button class="btn btn-outline" id="print-stock-check-btn">
+                                <i class="fas fa-print"></i> Print Stock Sheet
+                            </button>
+                            <button class="btn btn-outline" id="refresh-stock-btn">
+                                <i class="fas fa-sync"></i> Refresh
+                            </button>
+                        </div>
                     </div>
                     <div class="inventory-value">
                         <h3 id="stock-check-banner">Next Thursday</h3>
@@ -557,12 +562,14 @@
                             <thead>
                                 <tr>
                                     <th>Product</th>
-                                    <th>Remaining Qty</th>
+                                    <th>System Qty</th>
+                                    <th>Physical Qty Available</th>
+                                    <th>Difference / Notes</th>
                                 </tr>
                             </thead>
                             <tbody id="stock-table-body">
                                 <tr>
-                                    <td colspan="2" style="text-align: center;">No products</td>
+                                    <td colspan="4" style="text-align: center;">No products</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -945,7 +952,7 @@
                     </div>
                     
                     <div class="profit-loss-formula">
-                        Net Profit or Loss = Sales Revenue - Inventory Purchases - Expenses
+                        Net Profit or Loss = Sales Revenue - Inventory Purchase/Expenses - Other Expenses
                     </div>
                     <p class="report-note" id="profit-loss-range">Loading selected period...</p>
                     <div class="profit-loss-summary">
@@ -954,7 +961,7 @@
                             <p id="profit-loss-revenue">₦0.00</p>
                         </div>
                         <div class="summary-card">
-                            <h3>Inventory Purchases</h3>
+                            <h3>Inventory Purchase/Expenses</h3>
                             <p id="profit-loss-purchases">₦0.00</p>
                         </div>
                         <div class="summary-card">
@@ -995,7 +1002,7 @@
                                 <tr>
                                     <th>Week</th>
                                     <th>Sales</th>
-                                    <th>Purchases</th>
+                                    <th>Inventory Purchase/Expenses</th>
                                     <th>Expenses</th>
                                     <th>Net Result</th>
                                 </tr>
@@ -1623,6 +1630,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
     
     <!-- External JS -->
-    <script src="script.js?v=20260416"></script>
+    <script src="script.js?v=20260523-live-sync-1"></script>
   </body>
 </html>
