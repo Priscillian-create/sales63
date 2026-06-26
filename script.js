@@ -6618,13 +6618,13 @@ function buildBarcodeLabelHtml(product, barcode) {
           .label {
             width: 1.9in;
             height: 1in;
-            padding: 0.05in 0.07in 0.04in;
+            padding: 0.03in 0.08in 0.07in;
             display: grid;
-            grid-template-rows: 0.11in 0.15in 0.5in 0.15in;
-            gap: 0.01in;
+            grid-template-rows: 0.09in 0.12in 0.48in 0.17in;
+            gap: 0.005in;
           }
           .pharmacy-name {
-            font-size: 7px;
+            font-size: 6.5px;
             font-weight: 800;
             line-height: 1;
             text-align: center;
@@ -6633,9 +6633,9 @@ function buildBarcodeLabelHtml(product, barcode) {
             text-overflow: ellipsis;
           }
           .product-name {
-            font-size: 8px;
+            font-size: 7px;
             font-weight: 700;
-            line-height: 1.05;
+            line-height: 1;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -6644,31 +6644,38 @@ function buildBarcodeLabelHtml(product, barcode) {
           .barcode-svg {
             display: block;
             width: 100%;
-            height: 0.5in;
+            height: 0.48in;
             fill: #000;
             shape-rendering: crispEdges;
           }
           .label-footer {
-            display: flex;
+            display: grid;
+            grid-template-rows: 0.075in 0.075in;
+            gap: 0.005in;
             align-items: center;
-            justify-content: space-between;
-            gap: 4px;
+            min-width: 0;
           }
           .barcode-value,
           .product-price {
             font-family: "Courier New", monospace;
-            font-size: 8px;
             line-height: 1;
             white-space: nowrap;
+            text-align: center;
           }
           .barcode-value {
+            display: block;
+            width: 100%;
             min-width: 0;
             overflow: hidden;
-            text-overflow: ellipsis;
+            font-size: 6.5px;
           }
           .product-price {
+            display: block;
+            width: 100%;
+            font-size: 8px;
             font-weight: 700;
-            text-align: right;
+            overflow: hidden;
+            text-overflow: clip;
           }
           @media print {
             html, body, .label { width: 1.9in; height: 1in; }
