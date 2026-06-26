@@ -1,7 +1,7 @@
 const isLocalDevHost =
   window.location.hostname === 'localhost' ||
   window.location.hostname === '127.0.0.1';
-const APP_VERSION = '2026-06-26-offline-barcode-1';
+const APP_VERSION = '2026-06-26-inventory-offline-search-1';
 const APP_UPDATE_CHECK_INTERVAL_MS = isLocalDevHost ? 12000 : 45000;
 const APP_UPDATE_WATCH_FILES = [
   './index.html',
@@ -4908,6 +4908,34 @@ function matchesProductSearch(product, term) {
   ].some((value) => normalizeProductText(value).includes(normalizedTerm));
 }
 
+function readCachedProductsFromLocalStorage() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
+    return Array.isArray(cached) ? cached.filter(Boolean) : [];
+  } catch (error) {
+    console.warn('Could not read cached products:', error);
+    return [];
+  }
+}
+
+async function hydrateProductsForOfflineSearch() {
+  const cachedProducts = readCachedProductsFromLocalStorage();
+  if (cachedProducts.length > 0) {
+    products = mergeProductListsBySignature(products, cachedProducts);
+    dedupeProducts();
+    return;
+  }
+
+  const backup = await loadPersistentBackup();
+  const backupProducts =
+    backup && Array.isArray(backup.products) ? backup.products.filter(Boolean) : [];
+  if (backupProducts.length > 0) {
+    products = mergeProductListsBySignature(products, backupProducts);
+    dedupeProducts();
+    saveToLocalStorage({ skipBackup: true });
+  }
+}
+
 function mergeProductListsBySignature(...lists) {
   const merged = [];
   const seen = new Set();
@@ -6850,11 +6878,13 @@ async function loadInventory(refreshRemote = true) {
     } catch (e) {}
     const il = document.getElementById('inventory-loading');
     if (il) il.style.display = 'none';
+  } else {
+    await hydrateProductsForOfflineSearch();
   }
   dedupeProducts();
   renderInventoryAlerts();
   updateInventoryTotalFromAllProducts();
-  const baseList = products.filter((p) => !p.deleted);
+  const baseList = (Array.isArray(products) ? products : []).filter((p) => p && !p.deleted);
   const normalizedSearch = inventorySearchTerm.trim().toLowerCase();
   const msPerDay = 1000 * 60 * 60 * 24;
   const todayTs = Date.now();
@@ -10670,10 +10700,14 @@ function renderFilteredProducts(list) {
   renderChunk();
 }
 // Inventory search
-function applyInventorySearch(searchTerm) {
+async function applyInventorySearch(searchTerm) {
   const term = (searchTerm || '').toString().trim().toLowerCase();
   inventorySearchTerm = term;
-  loadInventory(false);
+  if (term) {
+    inventoryCategoryFilter = null;
+    await hydrateProductsForOfflineSearch();
+  }
+  await loadInventory(false);
 }
 
 function renderInventoryList(list) {
