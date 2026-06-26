@@ -6610,10 +6610,11 @@ function buildBarcodeLabelHtml(product, barcode) {
           html, body { width: 1.9in; height: 1in; margin: 0; padding: 0; background: #fff; }
           body {
             color: #000;
-            font-family: Arial, sans-serif;
+            font-family: Arial, Helvetica, sans-serif;
             overflow: hidden;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
+            text-rendering: geometricPrecision;
           }
           .label {
             width: 1.9in;
@@ -6624,17 +6625,18 @@ function buildBarcodeLabelHtml(product, barcode) {
             gap: 0.005in;
           }
           .pharmacy-name {
-            font-size: 6.5px;
-            font-weight: 800;
+            font-size: 7px;
+            font-weight: 900;
             line-height: 1;
             text-align: center;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            text-transform: uppercase;
           }
           .product-name {
-            font-size: 7px;
-            font-weight: 700;
+            font-size: 7.5px;
+            font-weight: 900;
             line-height: 1;
             white-space: nowrap;
             overflow: hidden;
@@ -6657,23 +6659,26 @@ function buildBarcodeLabelHtml(product, barcode) {
           }
           .barcode-value,
           .product-price {
-            font-family: "Courier New", monospace;
+            font-family: Arial, Helvetica, sans-serif;
             line-height: 1;
             white-space: nowrap;
             text-align: center;
+            color: #000;
           }
           .barcode-value {
             display: block;
             width: 100%;
             min-width: 0;
             overflow: hidden;
-            font-size: 6.5px;
+            font-size: 7px;
+            font-weight: 900;
+            letter-spacing: 0.2px;
           }
           .product-price {
             display: block;
             width: 100%;
-            font-size: 8px;
-            font-weight: 700;
+            font-size: 9px;
+            font-weight: 900;
             overflow: hidden;
             text-overflow: clip;
           }
