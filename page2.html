@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>PURELA PHARMACY</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .page-shell {
+        width: min(100%, 960px);
+        background: white;
+        border-radius: 20px;
+        padding: 32px;
+        box-shadow: 0 18px 45px rgba(44, 62, 80, 0.12);
+      }
+
+      .page-nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 32px;
+        flex-wrap: wrap;
+      }
+
+      .page-brand h1 {
+        color: var(--primary-color);
+        font-size: 2rem;
+        margin-bottom: 8px;
+      }
+
+      .page-brand p {
+        color: var(--gray-color);
+        font-size: 1rem;
+      }
+
+      .page-links {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .page-links a {
+        text-decoration: none;
+        padding: 12px 18px;
+        border-radius: 999px;
+        font-weight: 600;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .page-links a:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(44, 62, 80, 0.12);
+      }
+
+      .page-links .primary-link {
+        background: var(--primary-color);
+        color: white;
+      }
+
+      .page-links .secondary-link {
+        background: rgba(230, 126, 34, 0.1);
+        color: var(--primary-color);
+      }
+
+      .page-hero {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 24px;
+        align-items: center;
+      }
+
+      .page-copy h2 {
+        font-size: 2.3rem;
+        color: var(--dark-color);
+        margin-bottom: 16px;
+      }
+
+      .page-copy p {
+        font-size: 1rem;
+        line-height: 1.7;
+        color: #5d6d7e;
+        margin-bottom: 24px;
+      }
+
+      .page-stats {
+        display: grid;
+        gap: 14px;
+      }
+
+      .stat-card {
+        background: linear-gradient(135deg, #fff8f1, #ffffff);
+        border: 1px solid rgba(230, 126, 34, 0.15);
+        border-radius: 16px;
+        padding: 18px 20px;
+      }
+
+      .stat-card span {
+        display: block;
+        color: var(--gray-color);
+        font-size: 0.9rem;
+        margin-bottom: 8px;
+      }
+
+      .stat-card strong {
+        color: var(--dark-color);
+        font-size: 1.15rem;
+      }
+
+      @media (max-width: 640px) {
+        .page-shell {
+          padding: 24px;
+        }
+
+        .page-copy h2 {
+          font-size: 1.8rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page-shell">
+      <div class="page-nav">
+        <div class="page-brand">
+          <h1>PURELA PHARMACY</h1>
+          <p>Secondary page updated to render as a styled screen instead of plain text.</p>
+        </div>
+        <div class="page-links">
+          <a class="primary-link" href="./index.html">Open Dashboard</a>
+          <a class="secondary-link" href="./page2.html" aria-current="page">Refresh Page</a>
+        </div>
+      </div>
+
+      <section class="page-hero">
+        <div class="page-copy">
+          <h2>Your page now loads with structure and styling.</h2>
+          <p>
+            This page was previously just a bare heading and links, so it looked like unstyled text.
+            It now uses the pharmacy theme, proper spacing, and relative links that work reliably from
+            this project folder.
+          </p>
+          <div class="page-links">
+            <a class="primary-link" href="./index.html">Go to POS System</a>
+          </div>
+        </div>
+
+        <div class="page-stats">
+          <div class="stat-card">
+            <span>Status</span>
+            <strong>Styled layout is active</strong>
+          </div>
+          <div class="stat-card">
+            <span>Navigation</span>
+            <strong>Uses project-relative links</strong>
+          </div>
+          <div class="stat-card">
+            <span>JavaScript</span>
+            <strong>No unnecessary app script on this page</strong>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Display</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg-start: #0f172a;
+            --bg-end: #1e293b;
+            --panel: rgba(15, 23, 42, 0.72);
+            --panel-border: rgba(148, 163, 184, 0.18);
+            --text-main: #f8fafc;
+            --text-muted: #cbd5e1;
+            --accent: #22c55e;
+            --accent-soft: rgba(34, 197, 94, 0.14);
+            --danger: #fb7185;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Arial, Helvetica, sans-serif;
+            background:
+                radial-gradient(circle at top right, rgba(34, 197, 94, 0.18), transparent 28%),
+                linear-gradient(135deg, var(--bg-start), var(--bg-end));
+            color: var(--text-main);
+        }
+
+        .layout {
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            gap: 24px;
+            padding: 24px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.28);
+        }
+
+        .hero {
+            display: flex;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 28px;
+            align-items: center;
+        }
+
+        .hero h1,
+        .hero p,
+        .hero h2 {
+            margin: 0;
+        }
+
+        .hero h1 {
+            font-size: clamp(2rem, 4vw, 3.4rem);
+            margin-bottom: 8px;
+        }
+
+        .hero p {
+            color: var(--text-muted);
+            font-size: clamp(1rem, 1.6vw, 1.2rem);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 18px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: #bbf7d0;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .status-badge.waiting {
+            background: rgba(148, 163, 184, 0.14);
+            color: var(--text-muted);
+        }
+
+        .summary {
+            display: grid;
+            grid-template-columns: 2fr 1.2fr;
+            gap: 24px;
+        }
+
+        .items-panel,
+        .totals-panel,
+        .receipt-panel {
+            padding: 24px;
+        }
+
+        .section-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+
+        .section-title h2 {
+            margin: 0;
+            font-size: clamp(1.4rem, 2vw, 2rem);
+        }
+
+        .meta {
+            color: var(--text-muted);
+            font-size: 1rem;
+        }
+
+        .items-list {
+            display: grid;
+            gap: 14px;
+        }
+
+        .item-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            align-items: center;
+            gap: 18px;
+            padding: 18px 20px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(148, 163, 184, 0.12);
+        }
+
+        .item-name {
+            font-size: clamp(1.1rem, 1.8vw, 1.6rem);
+            font-weight: 700;
+        }
+
+        .item-meta,
+        .item-total,
+        .muted {
+            color: var(--text-muted);
+        }
+
+        .item-meta,
+        .item-total {
+            font-size: clamp(1rem, 1.5vw, 1.2rem);
+        }
+
+        .totals-grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .metric {
+            padding: 20px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(148, 163, 184, 0.12);
+        }
+
+        .metric-label {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .metric-value {
+            margin-top: 10px;
+            font-size: clamp(1.4rem, 3vw, 2.8rem);
+            font-weight: 800;
+        }
+
+        .metric-value.total {
+            color: #86efac;
+        }
+
+        .empty-state {
+            min-height: 300px;
+            display: grid;
+            place-items: center;
+            text-align: center;
+            padding: 36px 24px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px dashed rgba(148, 163, 184, 0.22);
+        }
+
+        .empty-state h2 {
+            margin: 0 0 10px;
+            font-size: clamp(1.8rem, 3vw, 2.8rem);
+        }
+
+        .empty-state p {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: clamp(1rem, 1.8vw, 1.25rem);
+        }
+
+        .receipt-panel {
+            display: none;
+        }
+
+        .receipt-panel.show {
+            display: block;
+        }
+
+        .receipt-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+            margin-top: 18px;
+        }
+
+        .receipt-card {
+            padding: 18px;
+            border-radius: 18px;
+            background: rgba(34, 197, 94, 0.08);
+            border: 1px solid rgba(134, 239, 172, 0.18);
+        }
+
+        .footer {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: center;
+            padding: 16px 8px 0;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        @media (max-width: 1100px) {
+            .summary {
+                grid-template-columns: 1fr;
+            }
+
+            .receipt-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <section class="panel hero">
+            <div>
+                <h1 id="store-name">PURELA PHARMACY</h1>
+                <p id="store-meta">Customer display ready</p>
+            </div>
+            <div class="status-badge waiting" id="status-badge">Waiting</div>
+        </section>
+
+        <section class="summary">
+            <div class="panel items-panel">
+                <div class="section-title">
+                    <h2>Current Basket</h2>
+                    <span class="meta" id="basket-count">0 items</span>
+                </div>
+                <div class="items-list" id="items-list"></div>
+                <div class="empty-state" id="empty-state">
+                    <div>
+                        <h2>Welcome</h2>
+                        <p>Your items will appear here as the cashier adds them.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel totals-panel">
+                <div class="section-title">
+                    <h2>Sale Summary</h2>
+                    <span class="meta" id="timestamp-label">Not synced</span>
+                </div>
+                <div class="totals-grid">
+                    <div class="metric">
+                        <div class="metric-label">Total</div>
+                        <div class="metric-value total" id="total-amount">NGN 0.00</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Payment Method</div>
+                        <div class="metric-value" id="payment-method">Cash</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Cashier</div>
+                        <div class="metric-value" id="cashier-name">-</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel receipt-panel" id="receipt-panel">
+            <div class="section-title">
+                <h2>Last Completed Sale</h2>
+                <span class="meta">Thank you for shopping with us</span>
+            </div>
+            <div class="receipt-grid">
+                <div class="receipt-card">
+                    <div class="metric-label">Receipt Number</div>
+                    <div class="metric-value" id="receipt-number">-</div>
+                </div>
+                <div class="receipt-card">
+                    <div class="metric-label">Amount Paid</div>
+                    <div class="metric-value total" id="receipt-total">NGN 0.00</div>
+                </div>
+                <div class="receipt-card">
+                    <div class="metric-label">Payment</div>
+                    <div class="metric-value" id="receipt-payment">Cash</div>
+                </div>
+                <div class="receipt-card">
+                    <div class="metric-label">Completed</div>
+                    <div class="metric-value" id="receipt-time">-</div>
+                </div>
+            </div>
+        </section>
+
+        <div class="footer">
+            <span id="connection-text">Connected to cashier screen</span>
+            <span class="muted">Customer display</span>
+        </div>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'pagerrysmart_customer_display_state';
+        const CHANNEL_NAME = 'purela_customer_display_channel';
+        const stateEls = {
+            storeName: document.getElementById('store-name'),
+            storeMeta: document.getElementById('store-meta'),
+            statusBadge: document.getElementById('status-badge'),
+            basketCount: document.getElementById('basket-count'),
+            itemsList: document.getElementById('items-list'),
+            emptyState: document.getElementById('empty-state'),
+            totalAmount: document.getElementById('total-amount'),
+            paymentMethod: document.getElementById('payment-method'),
+            cashierName: document.getElementById('cashier-name'),
+            timestampLabel: document.getElementById('timestamp-label'),
+            receiptPanel: document.getElementById('receipt-panel'),
+            receiptNumber: document.getElementById('receipt-number'),
+            receiptTotal: document.getElementById('receipt-total'),
+            receiptPayment: document.getElementById('receipt-payment'),
+            receiptTime: document.getElementById('receipt-time'),
+            connectionText: document.getElementById('connection-text')
+        };
+
+        function formatCurrency(amount) {
+            const value = Number(amount) || 0;
+            return new Intl.NumberFormat('en-NG', {
+                style: 'currency',
+                currency: 'NGN'
+            }).format(value);
+        }
+
+        function formatDateTime(value) {
+            if (!value) return '-';
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return '-';
+            return new Intl.DateTimeFormat('en-NG', {
+                dateStyle: 'medium',
+                timeStyle: 'short'
+            }).format(date);
+        }
+
+        function readState() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function render(state) {
+            const payload = state && typeof state === 'object' ? state : {};
+            const items = Array.isArray(payload.cartItems) ? payload.cartItems : [];
+            const storeName = payload.storeName || 'PURELA PHARMACY';
+            const storeAddress = payload.storeAddress || '';
+            const cashierName = payload.cashierName || 'Cashier';
+            const paymentMethod = (payload.paymentMethod || 'cash').toString().toUpperCase();
+            const itemCount = Number(payload.itemCount) || 0;
+            const total = Number(payload.totalAmount) || 0;
+            const lastSale = payload.lastSale && typeof payload.lastSale === 'object'
+                ? payload.lastSale
+                : null;
+            const isActive = items.length > 0;
+
+            stateEls.storeName.textContent = storeName;
+            stateEls.storeMeta.textContent = storeAddress || 'Customer display ready';
+            stateEls.basketCount.textContent = itemCount === 1 ? '1 item' : itemCount + ' items';
+            stateEls.totalAmount.textContent = formatCurrency(total);
+            stateEls.paymentMethod.textContent = paymentMethod;
+            stateEls.cashierName.textContent = cashierName;
+            stateEls.timestampLabel.textContent = payload.updatedAt
+                ? 'Updated ' + formatDateTime(payload.updatedAt)
+                : 'Not synced';
+            stateEls.connectionText.textContent = payload.updatedAt
+                ? 'Connected to cashier screen'
+                : 'Waiting for cashier screen';
+
+            stateEls.statusBadge.textContent = isActive ? 'Serving Customer' : 'Waiting';
+            stateEls.statusBadge.classList.toggle('waiting', !isActive);
+
+            stateEls.itemsList.innerHTML = '';
+            if (isActive) {
+                items.forEach((item) => {
+                    const row = document.createElement('div');
+                    row.className = 'item-row';
+                    row.innerHTML = `
+                        <div>
+                            <div class="item-name">${item.name || 'Item'}</div>
+                            <div class="item-meta">${formatCurrency(item.price)} each</div>
+                        </div>
+                        <div class="item-meta">x${Number(item.quantity) || 0}</div>
+                        <div class="item-total">${formatCurrency(item.lineTotal)}</div>
+                    `;
+                    stateEls.itemsList.appendChild(row);
+                });
+            }
+
+            stateEls.emptyState.style.display = isActive ? 'none' : 'grid';
+            stateEls.itemsList.style.display = isActive ? 'grid' : 'none';
+
+            if (lastSale) {
+                stateEls.receiptPanel.classList.add('show');
+                stateEls.receiptNumber.textContent = lastSale.receiptNumber || '-';
+                stateEls.receiptTotal.textContent = formatCurrency(lastSale.totalAmount);
+                stateEls.receiptPayment.textContent = (lastSale.paymentMethod || 'cash').toString().toUpperCase();
+                stateEls.receiptTime.textContent = formatDateTime(lastSale.createdAt);
+            } else {
+                stateEls.receiptPanel.classList.remove('show');
+            }
+        }
+
+        const initialState = readState();
+        render(initialState);
+
+        if ('BroadcastChannel' in window) {
+            const channel = new BroadcastChannel(CHANNEL_NAME);
+            channel.addEventListener('message', (event) => {
+                render(event.data);
+            });
+        }
+
+        window.addEventListener('storage', (event) => {
+            if (event.key === STORAGE_KEY) {
+                render(readState());
+            }
+        });
+
+        window.setInterval(() => {
+            render(readState());
+        }, 2000);
+    </script>
+</body>
+</html>
